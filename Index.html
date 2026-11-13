@@ -1,0 +1,56 @@
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mafia</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎭</text></svg>">
+<style>
+:root{--bg:#f6f4f0;--card:#fff;--tx:#1d1b20;--mu:#6b6670;--ac:#b3261e;--ac2:#fff;--bd:#e2ded8;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15131a;--card:#221f2a;--tx:#f1eef5;--mu:#a29cae;--ac:#e0524a;--bd:#38343f;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+#app{max-width:480px;margin:0 auto;padding:18px 16px 40px}
+h1{font-size:24px;margin:6px 0 4px}h2{font-size:20px;margin:4px 0 10px}p{margin:6px 0}.mu{color:var(--mu);font-size:14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin:12px 0}
+button{font:inherit;border:0;border-radius:12px;padding:13px 16px;background:var(--ac);color:var(--ac2);width:100%;margin-top:10px;font-weight:600;cursor:pointer}
+button.sec{background:transparent;color:var(--tx);border:1px solid var(--bd)}button:disabled{opacity:.4}
+input{font:inherit;width:100%;padding:12px;border-radius:12px;border:1px solid var(--bd);background:var(--card);color:var(--tx);margin-top:8px}
+.pick{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.pick button{margin:0;background:var(--card);color:var(--tx);border:1px solid var(--bd)}
+.pick button.on{background:var(--ac);color:var(--ac2);border-color:var(--ac)}
+.big{font-size:64px;text-align:center;margin:10px 0}.code{font-size:44px;letter-spacing:8px;text-align:center;font-weight:800}
+.timer{font-size:56px;text-align:center;font-weight:800;font-variant-numeric:tabular-nums}
+.dead{text-decoration:line-through;opacity:.5}
+.tag{display:inline-block;font-size:12px;padding:2px 8px;border-radius:10px;background:var(--bd);margin-left:6px}
+.say{border-left:4px solid var(--ac);padding-left:10px;font-style:italic}
+.night{background:#0b0a10;color:#c9c4d6;border-radius:14px;padding:40px 16px;text-align:center;margin:12px 0}
+.err{color:var(--ac);font-size:14px}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+</head><body><div id="app"></div>
+<script>
+const R={m:["🔪","Mafia"],dr:["💉","Doctor"],d:["🔍","Detective"],v:["🧑‍🌾","Villager"]};
+const $=document.getElementById("app");
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const LS=(k,v)=>{try{if(v===undefined)return localStorage.getItem(k);v===null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){}return null};
+const fmt=s=>Math.max(0,Math.floor(s/60))+":"+String(Math.max(0,s)%60).padStart(2,"0");
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
+let pid=LS("mf_pid");if(!pid){pid=Math.random().toString(36).slice(2,10);LS("mf_pid",pid)}
+let mode="",H=null,seen={},V=null,err="",sel=null,selKey="",peek=false,vEnd=0,code="",name=LS("mf_name")||"",busy=false,pgid=null;
+const hashCode=(location.hash||"").slice(1).toUpperCase().slice(0,4);
+/* ---------- NETWORK (MQTT relay over free public brokers, no sign-up) ---------- */
+const BROKERS=["wss://broker.emqx.io:8084/mqtt","wss://broker.hivemq.com:8884/mqtt"],T="mf1/";
+let cl=[],ids=new Set(),netTok=0;
+const up=()=>cl.some(c=>c.connected);
+const rid=()=>Math.random().toString(36).slice(2,10);
+function fail(m){busy=false;mode="";err=m;render()}
+function net(subs,handler,will,onConn){
+ if(typeof mqtt==="undefined"){fail("Couldn't load the game library. Turn off ad-block / Brave Shields for this page and refresh.");return false}
+ cl.forEach(c=>{try{c.end(true)}catch(e){}});cl=[];ids=new Set();const tok=++netTok;
+ BROKERS.forEach(u=>{
+  const o={clientId:"mf"+rid(),reconnectPeriod:2000,connectTimeout:8000,clean:true};
+  if(will)o.will={topic:will,payload:"",qos:1,retain:true};
+  const c=mqtt.connect(u,o);
+  c.on("connect",()=>{if(tok!==netTok)return;c.subscribe(subs,{qos:1});if(onConn)onConn();render()});
+  c.on("close",()=>{if(tok===netTok)render()});
+  c.on("error",()=>{});
+  c.on("message",(t,p)=>{if(tok!==netTok)return;let m;try{m=JSON.parse(p.toString())}catch(e){return}
+   if(!m)return;if(m.i){if(ids.has(m.i))return;ids.add(m.i);if(ids.size>800)ids=new Set([m.i])}
+   handler(t,m)});
